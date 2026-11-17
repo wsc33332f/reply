@@ -13,10 +13,199 @@ Dynamic: home-page
 Dynamic: license-file
 Dynamic: requires-python
 
-# reply
+# autoreply
 
-## Command calls
+A small Python package with basic math helpers, subprocess command runners,
+file downloads, and JSON/deserialization examples.
 
-`autoreply.call("whoami")` runs the host's `whoami` command and returns its
-output as a string. For safety, `whoami` is the only supported command;
-unsupported commands raise `ValueError`.
+## Installation
+
+Install the package from a checkout:
+
+```bash
+python -m pip install .
+```
+
+The package metadata declares Python `>=3.6`, but the command module uses
+built-in generic type annotations (`list[str]`) that require Python 3.9 or
+newer. Use Python 3.9+ to import the package as currently written.
+
+PyYAML is optional. Install it to enable the YAML cases in the demo:
+
+```bash
+python -m pip install PyYAML
+```
+
+The package metadata currently declares no dependencies. `requirements.txt`
+also lists NumPy and pandas, but the package code does not currently use them.
+
+## Basic use
+
+The package exports its public helpers from `autoreply`:
+
+```python
+import autoreply
+
+print(autoreply.add(2, 3))       # 5
+print(autoreply.subtract(7, 4))  # 3
+```
+
+The math helpers are implemented in `autoreply.module1` and
+`autoreply.module2`.
+
+## Running commands
+
+`command()` runs a command string through the platform's default shell.
+`command_args()` runs an argument list directly without a shell:
+
+```python
+import autoreply
+
+result = autoreply.command("whoami")
+print(result["stdout"])
+print(result["returncode"])
+
+result = autoreply.command_args(["whoami"])
+print(result["stdout"])
+```
+
+Both functions return a dictionary with `returncode`, `stdout`, and `stderr`.
+By default, a nonzero exit code raises `autoreply.CommandError`; set
+`check=False` to receive the result instead. `CommandError` exposes the
+`command`, `returncode`, `stdout`, and `stderr` attributes. Both functions
+accept a `timeout` (30 seconds by default) and `cwd`.
+
+`command()` uses `shell=True`, so it can execute shell syntax and commands
+available to the host. Only pass trusted command strings; do not build a
+command string from untrusted input. Prefer `command_args()` when arguments
+may contain user-provided data. Command names and shell syntax vary by
+platform (`cmd.exe` on Windows and `/bin/sh` on POSIX systems); for example,
+`ls` is not a standard Windows command. `command()` also accepts `env`, which
+is passed as the subprocess environment.
+
+## Downloading files
+
+`download(url, dest, ...)` downloads a URL to a local path and returns its
+path, byte size, and source URL:
+
+```python
+import autoreply
+
+info = autoreply.download(
+    "https://example.com/archive.zip",
+    "downloads/archive.zip",
+)
+print(info)
+# {"path": "downloads/archive.zip", "size": ..., "url": "..."}
+```
+
+Existing destination files are not overwritten unless `overwrite=True`.
+Downloads are written to a temporary file in the destination directory and
+then moved into place. A progress callback, when supplied, receives the
+downloaded byte count and the total size (or `None` if unknown):
+
+```python
+def show_progress(downloaded, total):
+    print(f"{downloaded} bytes downloaded; total={total}")
+
+autoreply.download(
+    "https://example.com/archive.zip",
+    "downloads/archive.zip",
+    overwrite=True,
+    timeout=60,
+    progress=show_progress,
+    headers={"User-Agent": "my-app/1.0"},
+)
+```
+
+Network failures raise `autoreply.DownloadError`. Refusing to overwrite an
+existing destination raises `FileExistsError`.
+
+## Fetching and parsing JSON
+
+`query_data()` fetches an HTTP(S) URL and parses the response as JSON. It
+defaults to a 10-second timeout and a 5 MiB response limit:
+
+```python
+data = autoreply.query_data(
+    "https://api.github.com/repos/python/cpython",
+    headers={"User-Agent": "my-app/1.0"},
+)
+```
+
+Use `query_dict()` when the response must be a JSON object and optionally
+specify required keys:
+
+```python
+repo = autoreply.query_dict(
+    "https://api.github.com/repos/python/cpython",
+    required_keys={"full_name", "stargazers_count"},
+    headers={"User-Agent": "my-app/1.0"},
+)
+print(repo["full_name"], repo["stargazers_count"])
+```
+
+Invalid URLs raise `ValueError`; fetch and parsing failures raise
+`autoreply.FetchError`. These functions parse JSON only—they do not use
+pickle, `eval`, or `exec`. Fetch only URLs you trust.
+
+## Deserialization demo
+
+The safe demo cases run by default and do not make a network request:
+
+```python
+results = autoreply.run_demo()
+for name, result in results.items():
+    print(name, result.safe, result.detail)
+```
+
+Each result is a `DemoResult` with `name`, `safe`, `executed`, `detail`,
+`parsed`, and `error` fields. If PyYAML is installed, the default demo also
+shows how `yaml.safe_load` rejects an unsafe YAML tag. A remote JSON example
+can be included explicitly:
+
+```python
+results = autoreply.run_demo(
+    remote_url="https://api.github.com/repos/python/cpython",
+)
+print(results["remote_query"].detail)
+```
+
+The `include_unsafe=True` option deliberately demonstrates unsafe
+deserialization and dynamic execution with pickle, `yaml.Loader`, `eval`, and
+`exec`:
+
+```python
+# Executes demonstration code locally. Use only in a controlled environment.
+results = autoreply.run_demo(include_unsafe=True)
+```
+
+Do not use unsafe deserialization or evaluate code from untrusted sources.
+The module can also be run as a CLI:
+
+```bash
+python -m autoreply.deserialize
+python -m autoreply.deserialize --remote-url https://api.github.com/repos/python/cpython
+python -m autoreply.deserialize --unsafe
+```
+
+The `--unsafe` flag runs the same intentionally executable demonstrations.
+
+## Repository examples and tests
+
+- `b.py` demonstrates `command()` and `command_args()`; its `ls` example is
+  intended for POSIX systems.
+- `c.py` demonstrates the deserialization and JSON-fetch APIs.
+- `a.py` is an older download example that imports `my_library`, which is not
+  the package name in this repository; change that import to `autoreply` to
+  use the package here.
+
+Run the unit tests with:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+The current `tests/test_commands.py` still targets the older `call()` API,
+which is not exported by the package; update that test before expecting the
+full test suite to pass.
