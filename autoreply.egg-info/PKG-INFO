@@ -1,0 +1,22 @@
+Metadata-Version: 2.4
+Name: autoreply
+Version: 0.1.1
+Summary: A simple Python library
+Home-page: https://github.com/wsc33332f/reply
+Author: Kirik
+Author-email: Kirik <email@example.com>
+Requires-Python: >=3.6
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Dynamic: author
+Dynamic: home-page
+Dynamic: license-file
+Dynamic: requires-python
+
+# reply
+
+## Command calls
+
+`autoreply.call("whoami")` runs the host's `whoami` command and returns its
+output as a string. For safety, `whoami` is the only supported command;
+unsupported commands raise `ValueError`.

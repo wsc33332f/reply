@@ -1,0 +1,17 @@
+LICENSE
+README.md
+pyproject.toml
+setup.py
+autoreply/__init__.py
+autoreply/commands.py
+autoreply/deserialize.py
+autoreply/downloads.py
+autoreply/module1.py
+autoreply/module2.py
+autoreply.egg-info/PKG-INFO
+autoreply.egg-info/SOURCES.txt
+autoreply.egg-info/dependency_links.txt
+autoreply.egg-info/top_level.txt
+tests/test_commands.py
+tests/test_module1.py
+tests/test_module2.py
