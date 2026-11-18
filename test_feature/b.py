@@ -3,7 +3,7 @@ from autoreply import command, command_args
 
 def main() -> None:
     for label, result in (
-        ("command", command("ls")),
+        ("command", command("pwd")),
         ("command_args", command_args(["whoami"])),
     ):
         if result["returncode"] != 0 or not result["stdout"]:

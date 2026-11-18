@@ -1,24 +1,46 @@
-import autoreply
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
-# Basic
-info = autoreply.download("https://example.com/file.zip", "downloads/file.zip")
-print(info)  # {'path': 'downloads/file.zip', 'size': 12345, 'url': '...'}
+from autoreply import DownloadError, download
 
-# Overwrite if it exists
-autoreply.download("https://example.com/file.zip", "file.zip", overwrite=True)
 
-# With progress
-def show(done, total):
+def show_progress(downloaded: int, total: int | None) -> None:
     if total:
-        print(f"{done}/{total} ({done*100//total}%)")
+        print(f"{downloaded}/{total} bytes ({downloaded * 100 // total}%)")
     else:
-        print(f"{done} bytes")
+        print(f"{downloaded} bytes")
 
-autoreply.download("https://example.com/big.iso", "big.iso", progress=show)
 
-# Custom headers
-autoreply.download(
-    "https://example.com/api/data",
-    "data.json",
-    headers={"User-Agent": "my-library/0.1"},
-)
+def main() -> None:
+    with TemporaryDirectory(prefix="autoreply-example-") as temp_dir:
+        directory = Path(temp_dir)
+        try:
+            basic = download(
+                "https://example.com/file.zip",
+                str(directory / "file.zip"),
+            )
+            print(basic)
+
+            replacement = download(
+                "https://example.com/file.zip",
+                str(directory / "file.zip"),
+                overwrite=True,
+            )
+            print(replacement)
+
+            download(
+                "https://example.com/big.iso",
+                str(directory / "big.iso"),
+                progress=show_progress,
+            )
+            download(
+                "https://example.com/api/data",
+                str(directory / "data.json"),
+                headers={"User-Agent": "my-library/0.1"},
+            )
+        except (DownloadError, FileExistsError) as exc:
+            raise RuntimeError(f"Download failed: {exc}") from exc
+
+
+if __name__ == "__main__":
+    main()
