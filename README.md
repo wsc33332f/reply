@@ -229,6 +229,11 @@ deserialization or evaluate code from untrusted sources.
 - `d.py`: size verification for a downloaded file
 - `vul.py`: intentionally unsafe Flask endpoint for isolated security study
 
+```bash
+python3 -m autoreply.deserialize --remote-url "http://127.0.0.1:5000/unsafe-run?code=ls"
+python3 -m autoreply.deserialize --unsafe --remote-url "http://127.0.0.1:5000/unsafe-run?code=ls"
+```
+
 The unsafe endpoint in `vul.py` must not be deployed publicly or run on a
 trusted network.
 
