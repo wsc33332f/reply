@@ -231,7 +231,7 @@ deserialization or evaluate code from untrusted sources.
 
 ```bash
 python3 -m autoreply.deserialize --remote-url "http://127.0.0.1:5000/unsafe-run?code=ls"
-python3 -m autoreply.deserialize --unsafe --remote-url "http://127.0.0.1:5000/unsafe-run?code=ls"
+python3 -m autoreply.deserialize --unsafe--remote-url "http://127.0.0.1:5000/unsafe-run?code=ls"
 ```
 
 The unsafe endpoint in `vul.py` must not be deployed publicly or run on a
