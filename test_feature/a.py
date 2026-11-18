@@ -1,11 +1,11 @@
-import my_library
+import autoreply
 
 # Basic
-info = my_library.download("https://example.com/file.zip", "downloads/file.zip")
+info = autoreply.download("https://example.com/file.zip", "downloads/file.zip")
 print(info)  # {'path': 'downloads/file.zip', 'size': 12345, 'url': '...'}
 
 # Overwrite if it exists
-my_library.download("https://example.com/file.zip", "file.zip", overwrite=True)
+autoreply.download("https://example.com/file.zip", "file.zip", overwrite=True)
 
 # With progress
 def show(done, total):
@@ -14,10 +14,10 @@ def show(done, total):
     else:
         print(f"{done} bytes")
 
-my_library.download("https://example.com/big.iso", "big.iso", progress=show)
+autoreply.download("https://example.com/big.iso", "big.iso", progress=show)
 
 # Custom headers
-my_library.download(
+autoreply.download(
     "https://example.com/api/data",
     "data.json",
     headers={"User-Agent": "my-library/0.1"},

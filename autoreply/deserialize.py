@@ -1,23 +1,6 @@
-"""
-Deserialization safety demonstration + safe remote fetch, in one module.
-
-Public API:
-    run_demo(include_unsafe=False, remote_url=None) -> dict[str, DemoResult]
-    query_data(url, ...) -> Any
-    query_dict(url, required_keys=..., ...) -> dict
-    FetchError
-
-The safe cases (json, yaml.safe_load, remote query) run by default.
-The unsafe cases (pickle, yaml.Loader, eval/exec) only run when
-include_unsafe=True, because they deliberately execute code and are
-meant for local, controlled study.
-"""
-
 from __future__ import annotations
 
-import base64
 import json
-import pickle
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -30,9 +13,7 @@ except ImportError:          # pragma: no cover
     _HAS_YAML = False
 
 
-# ─────────────────────────────────────────────────────────────────────
 # Safe remote fetch
-# ─────────────────────────────────────────────────────────────────────
 
 class FetchError(Exception):
     """Raised when a fetch or parse fails."""
@@ -49,9 +30,9 @@ def query_data(
     max_bytes: int = _MAX_BYTES,
 ) -> Any:
     """
-    GET `url` and return the parsed JSON body.
+    GET `url` and return the parsed body (JSON or YAML).
 
-    Only json.loads is used on the response — never pickle, eval, or exec.
+    Uses json.loads or yaml.safe_load — never unsafe load, pickle, eval, or exec.
     URLs must be http(s); responses are size-limited.
     """
     if not isinstance(url, str) or not url.startswith(("https://", "http://")):
@@ -76,9 +57,17 @@ def query_data(
         raise FetchError(f"Timed out fetching {url}") from e
 
     try:
-        return json.loads(raw)          # SAFE: JSON cannot execute code
-    except json.JSONDecodeError as e:
-        raise FetchError(f"Invalid JSON from {url}: {e}") from e
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        pass
+
+    if _HAS_YAML:
+        try:
+            return yaml.safe_load(raw)
+        except yaml.YAMLError as e:
+            raise FetchError(f"Invalid JSON/YAML from {url}: {e}") from e
+    else:
+        raise FetchError(f"Invalid JSON from {url} (PyYAML not installed to parse as YAML)")
 
 
 def query_dict(
@@ -88,12 +77,12 @@ def query_dict(
     **kwargs,
 ) -> dict:
     """
-    Like query_data() but requires the response to be a JSON object,
+    Like query_data() but requires the response to be an object (dict),
     optionally containing specific keys.
     """
     data = query_data(url, **kwargs)
     if not isinstance(data, dict):
-        raise FetchError(f"Expected JSON object, got {type(data).__name__}")
+        raise FetchError(f"Expected object/dict, got {type(data).__name__}")
     if required_keys:
         missing = required_keys - set(data)
         if missing:
@@ -101,9 +90,7 @@ def query_dict(
     return data
 
 
-# ─────────────────────────────────────────────────────────────────────
 # Demo result type
-# ─────────────────────────────────────────────────────────────────────
 
 @dataclass
 class DemoResult:
@@ -114,18 +101,16 @@ class DemoResult:
     detail: str                          # human-readable summary
     parsed: Any = None                   # parsed value, if any
     error: str | None = None             # exception text, if one was raised
+    output: Any = None                   # raw "output" field, if the response had one
 
 
-# ─────────────────────────────────────────────────────────────────────
 # Public entry point
-# ─────────────────────────────────────────────────────────────────────
 
 def run_demo(
     *,
     include_unsafe: bool = False,
     remote_url: str | None = None,
 ) -> dict[str, DemoResult]:
-    
     results: dict[str, DemoResult] = {}
 
     results["json"] = _demo_json()
@@ -142,18 +127,16 @@ def run_demo(
         results["remote_query"] = _demo_remote_query(remote_url)
 
     if include_unsafe:
-        results["pickle"] = _demo_pickle()
+        results["pickle"] = _demo_pickle_static()
         if _HAS_YAML:
-            results["yaml_unsafe"] = _demo_yaml_unsafe()
-        results["eval"] = _demo_eval()
-        results["exec"] = _demo_exec()
+            results["yaml_unsafe"] = _demo_yaml_unsafe_static()
+        results["eval"] = _demo_eval_static()
+        results["exec"] = _demo_exec_static()
 
     return results
 
 
-# ─────────────────────────────────────────────────────────────────────
 # Safe cases
-# ─────────────────────────────────────────────────────────────────────
 
 def _demo_json() -> DemoResult:
     payload = '{"cmd": "rm -rf /", "note": "just a string"}'
@@ -194,9 +177,18 @@ def _demo_yaml_safe() -> DemoResult:
 
 _DEMO_URL = "https://api.github.com/repos/python/cpython"
 
+# Keys that would be dangerous if they were ever executed. We only report them.
+_SENSITIVE_KEYS = {"code", "exec", "eval", "__reduce__", "system", "popen"}
+
 
 def _demo_remote_query(url: str = _DEMO_URL) -> DemoResult:
-    """Fetch JSON from a live URL and parse it safely."""
+    """
+    Fetch JSON or YAML from a live URL and parse it safely.
+
+    Never eval/exec/pickle the response. If the response contains an
+    "output" field, print it (as text only). If it contains executable
+    fields such as "code", report them as a warning but do NOT run them.
+    """
     try:
         data = query_data(url, headers={"User-Agent": "my-library/0.1"})
     except FetchError as e:
@@ -205,98 +197,88 @@ def _demo_remote_query(url: str = _DEMO_URL) -> DemoResult:
             detail=f"fetch failed: {e}", error=str(e),
         )
 
-    if isinstance(data, dict):
-        preview = {k: data[k] for k in list(data)[:3]}
-        detail = (
-            f"got JSON object with keys {list(data)[:5]}; "
-            f"parsed with json.loads (no code executed)"
+    if not isinstance(data, dict):
+        return DemoResult(
+            name="remote_query",
+            safe=True,
+            executed=False,
+            detail=f"Fetched & parsed safely, type: {type(data).__name__}",
+            parsed=data,
         )
-    else:
-        preview = data
-        detail = f"got JSON {type(data).__name__}; parsed with json.loads"
+
+    keys = list(data.keys())
+    output_value = data.get("output")
+    sensitive_hits = sorted(_SENSITIVE_KEYS & set(keys))
+
+    detail_parts = [f"Fetched & parsed safely (keys: {keys}); nothing executed."]
+    if sensitive_hits:
+        detail_parts.append(
+            f"WARNING: response contains potentially dangerous keys "
+            f"{sensitive_hits} — ignored, not executed."
+        )
+    if output_value is not None:
+        detail_parts.append("Response 'output' field (text only):")
+        detail_parts.append(str(output_value))
 
     return DemoResult(
-        name="remote_query", safe=True, executed=False,
-        detail=detail, parsed=preview,
+        name="remote_query",
+        safe=True,
+        executed=False,
+        detail="\n".join(detail_parts),
+        parsed=data,
+        output=output_value,
     )
 
 
-# ─────────────────────────────────────────────────────────────────────
-# Unsafe cases (opt-in only)
-# ─────────────────────────────────────────────────────────────────────
+# Unsafe cases — documentation only, nothing is executed
 
-class _Exploit:
-    """Test fixture: __reduce__ fires during unpickling."""
-    def __reduce__(self):
-        return (print, ("[pickle] __reduce__ executed during unpickle!",))
-
-
-def _demo_pickle() -> DemoResult:
-    raw = pickle.dumps(_Exploit())
-    try:
-        pickle.loads(raw)
-    except Exception as e:                       # noqa: BLE001
-        return DemoResult("pickle", False, False, "failed to unpickle", error=str(e))
-
+def _demo_pickle_static() -> DemoResult:
     return DemoResult(
-        name="pickle",
-        safe=False,
-        executed=True,
-        detail=f"__reduce__ executed; payload b64={base64.b64encode(raw).decode()[:40]}...",
+        name="pickle", safe=False, executed=False,
+        detail=(
+            "pickle.loads() on untrusted data can execute arbitrary code via "
+            "__reduce__. Demo disabled: no unpickling performed."
+        ),
     )
 
 
-def _demo_yaml_unsafe() -> DemoResult:
-    payload = (
-        '!!python/object/apply:os.system\n'
-        'args: ["echo \'[yaml] os.system executed via yaml.load\'"]\n'
-    )
-    try:
-        yaml.load(payload, Loader=yaml.Loader)
-    except Exception as e:                       # noqa: BLE001
-        return DemoResult("yaml_unsafe", False, False, "failed to load", error=str(e))
-
+def _demo_yaml_unsafe_static() -> DemoResult:
     return DemoResult(
-        name="yaml_unsafe", safe=False, executed=True,
-        detail="os.system executed via yaml.Loader",
+        name="yaml_unsafe", safe=False, executed=False,
+        detail=(
+            "yaml.load(..., Loader=yaml.Loader) executes tags like "
+            "!!python/object/apply:os.system. Demo disabled: no unsafe load performed."
+        ),
     )
 
 
-def _demo_eval() -> DemoResult:
-    expr = "__import__('os').system(\"echo '[eval] os.system executed'\")"
-    try:
-        eval(expr)                               # noqa: S307
-    except Exception as e:                       # noqa: BLE001
-        return DemoResult("eval", False, False, "eval failed", error=str(e))
-
-    return DemoResult("eval", safe=False, executed=True, detail="os.system executed via eval")
+def _demo_eval_static() -> DemoResult:
+    return DemoResult(
+        name="eval", safe=False, executed=False,
+        detail="eval() on untrusted input = RCE. Demo disabled: eval not called.",
+    )
 
 
-def _demo_exec() -> DemoResult:
-    code = "__import__('os').system(\"echo '[exec] os.system executed'\")"
-    try:
-        exec(code)                               # noqa: S102
-    except Exception as e:                       # noqa: BLE001
-        return DemoResult("exec", False, False, "exec failed", error=str(e))
-
-    return DemoResult("exec", safe=False, executed=True, detail="os.system executed via exec")
+def _demo_exec_static() -> DemoResult:
+    return DemoResult(
+        name="exec", safe=False, executed=False,
+        detail="exec() on untrusted input = RCE. Demo disabled: exec not called.",
+    )
 
 
-# ─────────────────────────────────────────────────────────────────────
 # CLI helper
-# ─────────────────────────────────────────────────────────────────────
 
 def main() -> None:
     import argparse
 
-    parser = argparse.ArgumentParser(description="Deserialization safety demo")
+    parser = argparse.ArgumentParser(description="Deserialization safety demo (JSON & YAML)")
     parser.add_argument(
         "--unsafe", action="store_true",
-        help="also run pickle/yaml.Loader/eval/exec cases (executes code)",
+        help="show unsafe case descriptions (does NOT execute code)",
     )
     parser.add_argument(
         "--remote-url", metavar="URL", default=None,
-        help="also fetch and safely parse JSON from this URL",
+        help="fetch and safely parse JSON or YAML from this URL; prints 'output' as text",
     )
     args = parser.parse_args()
 
@@ -307,7 +289,12 @@ def main() -> None:
     for name, res in results.items():
         flag = "SAFE  " if res.safe else "UNSAFE"
         ran = "EXECUTED" if res.executed else "inert"
-        print(f"[{flag}] {name:<13} {ran:<8} {res.detail}")
+        # First line of detail only, to keep the table aligned
+        first_line = res.detail.splitlines()[0] if res.detail else ""
+        print(f"[{flag}] {name:<13} {ran:<8} {first_line}")
+        # Print the rest of the detail (including any 'output' content) below
+        for line in res.detail.splitlines()[1:]:
+            print(f"           {line}")
         if res.error:
             print(f"           error: {res.error}")
 

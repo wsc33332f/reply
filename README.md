@@ -1,32 +1,54 @@
 # autoreply
 
-A small Python package with basic math helpers, subprocess command runners,
-file downloads, and JSON/deserialization examples.
+This just serve for studying, We are not responsible if you use it for illegal purposes
 
-## Installation
+`autoreply` is a small Python package for studying basic library design and
+common Python tasks:
 
-Install the package from a checkout:
+- arithmetic helpers
+- shell and argument-list command execution
+- HTTP file downloads
+- JSON and YAML deserialization
+- opt-in unsafe deserialization and dynamic code-execution demonstrations
+
+## Requirements
+
+- Python 3.9 or newer
+- PyYAML is optional and enables YAML examples
+
+Install the package from the repository root:
 
 ```bash
 python -m pip install .
 ```
 
-The package metadata declares Python `>=3.6`, but the command module uses
-built-in generic type annotations (`list[str]`) that require Python 3.9 or
-newer. Use Python 3.9+ to import the package as currently written.
-
-PyYAML is optional. Install it to enable the YAML cases in the demo:
+Optional YAML support:
 
 ```bash
 python -m pip install PyYAML
 ```
 
-The package metadata currently declares no dependencies. `requirements.txt`
-also lists NumPy and pandas, but the package code does not currently use them.
+## Public API
 
-## Basic use
+The package exports these helpers:
 
-The package exports its public helpers from `autoreply`:
+```python
+import autoreply
+
+autoreply.add(2, 3)
+autoreply.subtract(7, 4)
+autoreply.command(...)
+autoreply.command_args([...])
+autoreply.download(...)
+autoreply.query_data(...)
+autoreply.query_dict(...)
+autoreply.run_demo(...)
+```
+
+The package also exports `CommandError`, `DownloadError`, `FetchError`, and
+`DemoResult`.
+
+## Math helpers
 
 ```python
 import autoreply
@@ -35,119 +57,140 @@ print(autoreply.add(2, 3))       # 5
 print(autoreply.subtract(7, 4))  # 3
 ```
 
-The math helpers are implemented in `autoreply.module1` and
-`autoreply.module2`.
-
 ## Running commands
 
-`command()` runs a command string through the platform's default shell.
-`command_args()` runs an argument list directly without a shell:
+Use `command()` for a trusted shell command string:
 
 ```python
-import autoreply
-
 result = autoreply.command("whoami")
 print(result["stdout"])
 print(result["returncode"])
+print(result["stderr"])
+```
 
+Use `command_args()` for an argument list without invoking a shell:
+
+```python
 result = autoreply.command_args(["whoami"])
 print(result["stdout"])
 ```
 
-Both functions return a dictionary with `returncode`, `stdout`, and `stderr`.
-By default, a nonzero exit code raises `autoreply.CommandError`; set
-`check=False` to receive the result instead. `CommandError` exposes the
-`command`, `returncode`, `stdout`, and `stderr` attributes. Both functions
-accept a `timeout` (30 seconds by default) and `cwd`.
+Both functions return:
 
-`command()` uses `shell=True`, so it can execute shell syntax and commands
-available to the host. Only pass trusted command strings; do not build a
-command string from untrusted input. Prefer `command_args()` when arguments
-may contain user-provided data. Command names and shell syntax vary by
-platform (`cmd.exe` on Windows and `/bin/sh` on POSIX systems); for example,
-`ls` is not a standard Windows command. `command()` also accepts `env`, which
-is passed as the subprocess environment.
+```python
+{
+    "returncode": 0,
+    "stdout": "...",
+    "stderr": "...",
+}
+```
+
+By default, a nonzero exit code raises `autoreply.CommandError`. Use
+`check=False` to receive the result instead. Commands support `timeout` and
+`cwd`; `command()` also supports an environment override.
+
+```python
+result = autoreply.command(
+    "whoami",
+    timeout=10,
+    cwd="/tmp",
+    env={"EXAMPLE": "value"},
+)
+```
+
+`command()` uses a shell and therefore accepts shell syntax. Only pass trusted
+command strings. Prefer `command_args()` for untrusted arguments.
 
 ## Downloading files
 
-`download(url, dest, ...)` downloads a URL to a local path and returns its
-path, byte size, and source URL:
-
 ```python
-import autoreply
-
 info = autoreply.download(
     "https://example.com/archive.zip",
     "downloads/archive.zip",
 )
+
 print(info)
-# {"path": "downloads/archive.zip", "size": ..., "url": "..."}
+# {"path": "downloads/archive.zip", "size": 12345, "url": "..."}
 ```
 
-Existing destination files are not overwritten unless `overwrite=True`.
-Downloads are written to a temporary file in the destination directory and
-then moved into place. A progress callback, when supplied, receives the
-downloaded byte count and the total size (or `None` if unknown):
+An existing destination is not overwritten by default:
 
 ```python
-def show_progress(downloaded, total):
-    print(f"{downloaded} bytes downloaded; total={total}")
-
 autoreply.download(
     "https://example.com/archive.zip",
     "downloads/archive.zip",
     overwrite=True,
     timeout=60,
-    progress=show_progress,
-    headers={"User-Agent": "my-app/1.0"},
+    headers={"User-Agent": "my-library/0.1"},
 )
 ```
 
-Network failures raise `autoreply.DownloadError`. Refusing to overwrite an
-existing destination raises `FileExistsError`.
+Track progress with a callback:
+
+```python
+def show_progress(downloaded, total):
+    if total is None:
+        print(f"{downloaded} bytes downloaded")
+    else:
+        print(f"{downloaded}/{total} bytes downloaded")
+
+autoreply.download(
+    "https://example.com/archive.zip",
+    "downloads/archive.zip",
+    progress=show_progress,
+)
+```
+
+Network failures raise `DownloadError`. Refusing to overwrite an existing
+destination raises `FileExistsError`.
 
 ## Fetching and parsing JSON
 
-`query_data()` fetches an HTTP(S) URL and parses the response as JSON. It
-defaults to a 10-second timeout and a 5 MiB response limit:
+Fetch an HTTP(S) URL and parse it as JSON or, when available, YAML:
 
 ```python
 data = autoreply.query_data(
     "https://api.github.com/repos/python/cpython",
-    headers={"User-Agent": "my-app/1.0"},
+    headers={"User-Agent": "my-library/0.1"},
 )
 ```
 
-Use `query_dict()` when the response must be a JSON object and optionally
-specify required keys:
+Require a JSON object and specific keys:
 
 ```python
 repo = autoreply.query_dict(
     "https://api.github.com/repos/python/cpython",
     required_keys={"full_name", "stargazers_count"},
-    headers={"User-Agent": "my-app/1.0"},
+    headers={"User-Agent": "my-library/0.1"},
 )
-print(repo["full_name"], repo["stargazers_count"])
+
+print(repo["full_name"])
 ```
 
-Invalid URLs raise `ValueError`; fetch and parsing failures raise
-`autoreply.FetchError`. These functions parse JSON only—they do not use
-pickle, `eval`, or `exec`. Fetch only URLs you trust.
+The fetch is limited to 5 MiB by default. Invalid URLs raise `ValueError`;
+network and parsing failures raise `FetchError`.
 
-## Deserialization demo
+## Deserialization demonstrations
 
-The safe demo cases run by default and do not make a network request:
+Run the safe, inert demonstration cases:
 
 ```python
 results = autoreply.run_demo()
+
 for name, result in results.items():
-    print(name, result.safe, result.detail)
+    print(name, result.safe, result.executed, result.detail)
 ```
 
-Each result is a `DemoResult` with `name`, `safe`, `executed`, `detail`,
-`parsed`, and `error` fields. If PyYAML is installed, the default demo also
-shows how `yaml.safe_load` rejects an unsafe YAML tag. A remote JSON example
-can be included explicitly:
+Each `DemoResult` includes:
+
+- `name`
+- `safe`
+- `executed`
+- `detail`
+- `parsed`
+- `error`
+
+Optionally fetch and safely parse a remote response:
 
 ```python
 results = autoreply.run_demo(
@@ -156,17 +199,7 @@ results = autoreply.run_demo(
 print(results["remote_query"].detail)
 ```
 
-The `include_unsafe=True` option deliberately demonstrates unsafe
-deserialization and dynamic execution with pickle, `yaml.Loader`, `eval`, and
-`exec`:
-
-```python
-# Executes demonstration code locally. Use only in a controlled environment.
-results = autoreply.run_demo(include_unsafe=True)
-```
-
-Do not use unsafe deserialization or evaluate code from untrusted sources.
-The module can also be run as a CLI:
+Run the module from the command line:
 
 ```bash
 python -m autoreply.deserialize
@@ -174,23 +207,35 @@ python -m autoreply.deserialize --remote-url https://api.github.com/repos/python
 python -m autoreply.deserialize --unsafe
 ```
 
-The `--unsafe` flag runs the same intentionally executable demonstrations.
+## Unsafe demonstrations
 
-## Repository examples and tests
+`include_unsafe=True` and `--unsafe` deliberately demonstrate unsafe
+deserialization and dynamic execution using pickle, `yaml.Loader`, `eval`, and
+`exec`.
 
-- `b.py` demonstrates `command()` and `command_args()`; its `ls` example is
-  intended for POSIX systems.
-- `c.py` demonstrates the deserialization and JSON-fetch APIs.
-- `a.py` is an older download example that imports `my_library`, which is not
-  the package name in this repository; change that import to `autoreply` to
-  use the package here.
+```python
+# Executes demonstration code locally.
+autoreply.run_demo(include_unsafe=True)
+```
 
-Run the unit tests with:
+Run unsafe demonstrations only in a controlled environment. Do not use unsafe
+deserialization or evaluate code from untrusted sources.
+
+## Repository examples
+
+- `a.py`: download API example
+- `b.py`: command runner example
+- `c.py`: deserialization and remote-fetch example
+- `d.py`: size verification for a downloaded file
+- `vul.py`: intentionally unsafe Flask endpoint for isolated security study
+
+The unsafe endpoint in `vul.py` must not be deployed publicly or run on a
+trusted network.
+
+## Testing
+
+Run the unit tests:
 
 ```bash
 python -m unittest discover -s tests -v
 ```
-
-The current `tests/test_commands.py` still targets the older `call()` API,
-which is not exported by the package; update that test before expecting the
-full test suite to pass.

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "autoreply"
-version = "0.1.1"
+version = "0.1.5"
 authors = [{name = "Kirik", email = "email@example.com"}]
 description = "A simple Python library"
 readme = "README.md"

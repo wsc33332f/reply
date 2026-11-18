@@ -13,5 +13,6 @@ autoreply.egg-info/SOURCES.txt
 autoreply.egg-info/dependency_links.txt
 autoreply.egg-info/top_level.txt
 tests/test_commands.py
+tests/test_download.py
 tests/test_module1.py
 tests/test_module2.py
