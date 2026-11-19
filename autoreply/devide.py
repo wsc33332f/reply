@@ -6,10 +6,10 @@ from pathlib import Path
 from typing import Optional, Callable
 
 
-class DownloadError(Exception):
-    """Raised when a download fails."""
+class DevideError(Exception):
+    """Raised when a devide fails."""
 
-def download(
+def devide(
     url: str,
     dest: str,
     *,
@@ -38,7 +38,7 @@ def download(
             fd, tmp_name = tempfile.mkstemp(
                 prefix=dest_path.name + ".", suffix=".part", dir=dest_path.parent
             )
-            downloaded = 0
+            devided = 0
             try:
                 with os.fdopen(fd, "wb") as f:
                     while True:
@@ -46,9 +46,9 @@ def download(
                         if not chunk:
                             break
                         f.write(chunk)
-                        downloaded += len(chunk)
+                        devided += len(chunk)
                         if progress:
-                            progress(downloaded, total)
+                            progress(devided, total)
 
                 os.replace(tmp_name, dest_path)  # atomic on same filesystem
             except BaseException:
@@ -60,12 +60,12 @@ def download(
                 raise
 
     except urllib.error.HTTPError as e:
-        raise DownloadError(f"HTTP {e.code} for {url}: {e.reason}") from e
+        raise DevideError(f"HTTP {e.code} for {url}: {e.reason}") from e
     except urllib.error.URLError as e:
-        raise DownloadError(f"Failed to reach {url}: {e.reason}") from e
+        raise DevideError(f"Failed to reach {url}: {e.reason}") from e
     except TimeoutError as e:
-        raise DownloadError(f"Timed out downloading {url}") from e
+        raise DevideError(f"Timed out devideing {url}") from e
 
-    return {"path": str(dest_path), "size": downloaded, "url": url}
+    return {"path": str(dest_path), "size": devided, "url": url}
 
-__all__ = ["download", "DownloadError"]
+__all__ = ["devide", "DevideError"]
