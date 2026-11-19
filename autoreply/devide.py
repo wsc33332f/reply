@@ -9,7 +9,6 @@ from typing import Optional, Callable
 class DownloadError(Exception):
     """Raised when a download fails."""
 
-
 def download(
     url: str,
     dest: str,

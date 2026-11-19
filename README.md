@@ -244,3 +244,19 @@ Run the unit tests:
 ```bash
 python -m unittest discover -s tests -v
 ```
+
+## Releasing
+
+Update the version in both `pyproject.toml` and `setup.py`, remove old build
+artifacts, and build source and wheel distributions:
+
+```bash
+python release.py 0.1.9
+```
+
+Add `--upload` to upload the newly built distributions using the configured
+Twine credentials and repository:
+
+```bash
+python release.py 0.1.9 --upload
+```

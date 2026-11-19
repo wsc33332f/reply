@@ -4,3 +4,9 @@ dist/
 build/
 autoreply.egg-info/
 reply.py
+multiple.py
+release.py
+a.py
+b.py
+c.py
+d.py

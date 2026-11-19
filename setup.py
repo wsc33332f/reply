@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="autoreply",
-    version="0.1.7",
+    version="0.1.9",
     packages=find_packages(),
     install_requires=[],
     author="Kirik",
