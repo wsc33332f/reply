@@ -7,9 +7,12 @@ from typing import Optional, Callable
 
 
 class DevideError(Exception):
-    """Raised when a devide fails."""
+    """Raised when a file transfer fails."""
 
-def devide(
+DownloadError = DevideError
+
+
+def download(
     url: str,
     dest: str,
     *,
@@ -19,7 +22,6 @@ def devide(
     progress: Optional[Callable[[int, Optional[int]], None]] = None,
     headers: Optional[dict] = None,
 ) -> dict:
-    
     dest_path = Path(dest).expanduser()
 
     if dest_path.exists() and not overwrite:
@@ -64,8 +66,103 @@ def devide(
     except urllib.error.URLError as e:
         raise DevideError(f"Failed to reach {url}: {e.reason}") from e
     except TimeoutError as e:
-        raise DevideError(f"Timed out devideing {url}") from e
+        raise DevideError(f"Timed out downloading {url}") from e
 
     return {"path": str(dest_path), "size": devided, "url": url}
 
-__all__ = ["devide", "DevideError"]
+
+def upload(
+    url: str,
+    source: str,
+    *,
+    timeout: float = 30.0,
+    method: str = "POST",
+    content_type: str = "application/octet-stream",
+    headers: Optional[dict] = None,
+) -> dict:
+    """Send a local file as the HTTP request body and return transfer metadata."""
+    if not url.startswith(("http://", "https://")):
+        raise ValueError("Only http(s) URLs are supported for uploads")
+
+    source_path = Path(source).expanduser()
+    size = source_path.stat().st_size
+    request_headers = {
+        "Content-Type": content_type,
+        "Content-Length": str(size),
+    }
+    if headers:
+        request_headers.update(headers)
+
+    try:
+        with source_path.open("rb") as source_file:
+            req = urllib.request.Request(
+                url,
+                data=source_file,
+                headers=request_headers,
+                method=method,
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                status = getattr(resp, "status", 200)
+                if not 200 <= status < 300:
+                    raise DevideError(f"HTTP {status} when uploading to {url}")
+    except urllib.error.HTTPError as e:
+        raise DevideError(f"HTTP {e.code} when uploading to {url}: {e.reason}") from e
+    except urllib.error.URLError as e:
+        raise DevideError(f"Failed to reach {url}: {e.reason}") from e
+    except TimeoutError as e:
+        raise DevideError(f"Timed out uploading to {url}") from e
+
+    return {
+        "path": str(source_path),
+        "size": size,
+        "url": url,
+        "status": status,
+    }
+
+
+def main(argv: Optional[list] = None) -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Download or upload a file over HTTP")
+    transfer = parser.add_mutually_exclusive_group(required=True)
+    transfer.add_argument("--download", metavar="URL")
+    transfer.add_argument("--upload", metavar="URL")
+    parser.add_argument("--output", metavar="PATH", help="destination path for downloads")
+    parser.add_argument("--file", metavar="PATH", help="local file to upload")
+    parser.add_argument("--overwrite", action="store_true", help="replace an existing download")
+    parser.add_argument("--timeout", type=float, default=30.0)
+    args = parser.parse_args(argv)
+
+    try:
+        if args.download:
+            if args.file:
+                parser.error("--file can only be used with --upload")
+            if not args.output:
+                parser.error("--output is required with --download")
+            result = download(
+                args.download,
+                args.output,
+                timeout=args.timeout,
+                overwrite=args.overwrite,
+            )
+        else:
+            if args.output:
+                parser.error("--output can only be used with --download")
+            if args.overwrite:
+                parser.error("--overwrite can only be used with --download")
+            if not args.file:
+                parser.error("--file is required with --upload")
+            result = upload(args.upload, args.file, timeout=args.timeout)
+    except (DevideError, OSError, ValueError) as exc:
+        parser.error(str(exc))
+
+    print(result)
+
+
+devide = download
+
+if __name__ == "__main__":
+    main()
+
+
+__all__ = ["download", "upload", "devide", "DownloadError", "DevideError", "main"]

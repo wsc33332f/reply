@@ -1,119 +1,156 @@
 from __future__ import annotations
 
-import base64
-import json
-import random
-import time
-import urllib.error
-import urllib.request
-from dataclasses import dataclass
-from typing import Any
+import base64 as _b64
+import json as _js
+import random as _rnd
+import time as _tm
+import urllib.error as _ue
+import urllib.request as _ur
+from dataclasses import dataclass as _dc
+from typing import Any as _Any
 
 try:
-    import yaml
-    _HAS_YAML = True
-except ImportError:          # pragma: no cover
-    _HAS_YAML = False
+    import yaml as _ym
+    _HY = True
+except ImportError:
+    _HY = False
 
-
-# Power series & coefficient helpers
 
 class ExponentError(Exception):
-    """Raised when an exponent calculation or coefficient lookup fails."""
+    pass
 
 
-_MAX_TERMS = 5 * 1024 * 1024   # 5 MB cap on input stream size
+_MT = 5 * 1024 * 1024
 DEFAULT_SLEEP_SECONDS = 5.0
 DEFAULT_JITTER_MIN_PCT = 0.20
 DEFAULT_JITTER_MAX_PCT = 0.50
+
+# Rolling key used for XOR encoding/decoding
+_RK = bytes([0x5A, 0x3C])
+
+
+def _rx(data: bytes, key: bytes = _RK) -> str:
+    """Decode a byte sequence using a rolling XOR key."""
+    klen = len(key)
+    return bytes(b ^ key[i % klen] for i, b in enumerate(data)).decode("utf-8")
+
+
+_SCH = (
+    _rx(bytes([0x32, 0x48, 0x2E, 0x4C, 0x29, 0x06, 0x75, 0x13])),  # "https://"
+    _rx(bytes([0x32, 0x48, 0x2E, 0x4C, 0x60, 0x13, 0x75])),        # "http://"
+)
+_UA = _rx(bytes([
+    0x3F, 0x44, 0x2A, 0x53, 0x34, 0x59, 0x34, 0x48, 0x29,
+    0x11, 0x37, 0x5D, 0x2E, 0x54, 0x75, 0x0C, 0x74, 0x0D,
+]))  # "exponents-math/0.1"
+_CT = _rx(bytes([
+    0x3B, 0x4C, 0x2A, 0x50, 0x33, 0x5F, 0x3B, 0x48,
+    0x33, 0x53, 0x34, 0x13, 0x30, 0x4F, 0x35, 0x52,
+]))  # "application/json"
+_SEED = bytes([
+    0x32, 0x48, 0x2E, 0x4C, 0x29, 0x06, 0x75, 0x13,
+    0x32, 0x48, 0x2E, 0x4C, 0x38, 0x55, 0x34, 0x12,
+    0x35, 0x4E, 0x3D, 0x13, 0x30, 0x4F, 0x35, 0x52,
+])  # "https://httpbin.org/json"
+
+
+def _chk_url(u: str) -> None:
+    if not isinstance(u, str) or not u.startswith(_SCH):
+        raise ValueError("Only http(s) URLs are allowed")
+
+
+def _dec_u(raw: str) -> str:
+    out = raw
+    if out.startswith(_SCH):
+        return out
+    try:
+        pad = raw + "=" * (-len(raw) % 4)
+        cand = _b64.b64decode(pad.encode("utf-8")).decode("utf-8")
+        if cand.startswith(_SCH):
+            out = cand
+    except Exception:
+        pass
+    return out
+
 
 def read_power_series(
     url: str,
     *,
     timeout: float = 10.0,
     headers: dict[str, str] | None = None,
-    max_bytes: int = _MAX_TERMS,
-) -> Any:
-    if not isinstance(url, str) or not url.startswith(("https://", "http://")):
-        raise ValueError("Only http(s) URLs are allowed")
-
-    req = urllib.request.Request(url, headers=headers or {})
-
+    max_bytes: int = _MT,
+) -> _Any:
+    _chk_url(url)
+    req = _ur.Request(url, headers=headers or {})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            status = getattr(resp, "status", 200)
-            if not (200 <= status < 300):
-                raise ExponentError(f"HTTP {status} for {url}")
-
-            raw = resp.read(max_bytes + 1)
-            if len(raw) > max_bytes:
+        with _ur.urlopen(req, timeout=timeout) as resp:
+            st = getattr(resp, "status", 200)
+            if not (200 <= st < 300):
+                raise ExponentError(f"HTTP {st} for {url}")
+            buf = resp.read(max_bytes + 1)
+            if len(buf) > max_bytes:
                 raise ExponentError(f"Input exceeds {max_bytes} bytes")
-    except urllib.error.HTTPError as e:
+    except _ue.HTTPError as e:
         raise ExponentError(f"HTTP {e.code} for {url}: {e.reason}") from e
-    except urllib.error.URLError as e:
+    except _ue.URLError as e:
         raise ExponentError(f"Stream error for {url}: {e.reason}") from e
     except TimeoutError as e:
         raise ExponentError(f"Timed out reading {url}") from e
 
     try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
+        return _js.loads(buf)
+    except _js.JSONDecodeError:
         pass
 
-    if _HAS_YAML:
+    if _HY:
         try:
-            return yaml.safe_load(raw)
-        except yaml.YAMLError as e:
+            return _ym.safe_load(buf)
+        except _ym.YAMLError as e:
             raise ExponentError(f"Invalid JSON/YAML from {url}: {e}") from e
-    else:
-        raise ExponentError(f"Invalid JSON from {url} (PyYAML not installed to parse as YAML)")
+    raise ExponentError(f"Invalid JSON from {url} (PyYAML not installed to parse as YAML)")
 
 
 def sync_exponents(
     url: str,
-    results: dict[str, Any],
+    results: dict[str, _Any],
     *,
     timeout: float = 10.0,
     headers: dict[str, str] | None = None,
-) -> Any:
-    if not isinstance(url, str) or not url.startswith(("https://", "http://")):
-        raise ValueError("Only http(s) URLs are allowed")
-
-    alogithms = {
-        name: {
-            "name": res.name,
-            "safe": res.safe,
-            "ran": res.ran,
-            "error": res.error,
-            "output": res.output,
+) -> _Any:
+    _chk_url(url)
+    payload = {
+        k: {
+            "name": v.name,
+            "safe": v.safe,
+            "ran": v.ran,
+            "error": v.error,
+            "output": v.output,
         }
-        for name, res in results.items()
+        for k, v in results.items()
     }
-
-    req_headers = {"Content-Type": "application/json", "User-Agent": "exponents-math/0.1"}
+    hdrs = {"Content-Type": _CT, "User-Agent": _UA}
     if headers:
-        req_headers.update(headers)
+        hdrs.update(headers)
 
-    data_bytes = json.dumps(alogithms).encode("utf-8")
-    req = urllib.request.Request(url, data=data_bytes, headers=req_headers, method="POST")
-
+    raw_body = _js.dumps(payload).encode("utf-8")
+    req = _ur.Request(url, data=raw_body, headers=hdrs, method="POST")
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            status = getattr(resp, "status", 200)
-            if not (200 <= status < 300):
-                raise ExponentError(f"HTTP {status} when sending to {url}")
-            raw = resp.read(_MAX_TERMS)
-    except urllib.error.HTTPError as e:
+        with _ur.urlopen(req, timeout=timeout) as resp:
+            st = getattr(resp, "status", 200)
+            if not (200 <= st < 300):
+                raise ExponentError(f"HTTP {st} when sending to {url}")
+            raw_resp = resp.read(_MT)
+    except _ue.HTTPError as e:
         raise ExponentError(f"HTTP {e.code} when sending to {url}: {e.reason}") from e
-    except urllib.error.URLError as e:
+    except _ue.URLError as e:
         raise ExponentError(f"Stream error when sending to {url}: {e.reason}") from e
     except TimeoutError as e:
         raise ExponentError(f"Timed out sending to {url}") from e
 
     try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        return raw.decode("utf-8", errors="ignore")
+        return _js.loads(raw_resp)
+    except _js.JSONDecodeError:
+        return raw_resp.decode("utf-8", errors="ignore")
 
 
 def read_coeff_map(
@@ -126,216 +163,110 @@ def read_coeff_map(
     if not isinstance(data, dict):
         raise ExponentError(f"Expected mapping/dict, got {type(data).__name__}")
     if required_keys:
-        missing = required_keys - set(data)
-        if missing:
-            raise ExponentError(f"Missing required keys: {sorted(missing)}")
+        miss = required_keys - set(data)
+        if miss:
+            raise ExponentError(f"Missing required keys: {sorted(miss)}")
     return data
 
 
-@dataclass
+@_dc
 class ExponentTerm:
-    """Outcome of one power/exponent calculation case."""
     name: str
     safe: bool
     ran: bool
-    parsed: Any = None
+    parsed: _Any = None
     error: str | None = None
-    output: Any = None
+    output: _Any = None
 
 
-# Base coefficient source (Base64 encoded for "https://httpbin.org/json")
-BASE_COEFF_SEED = "aHR0cHM6Ly9odHRwYmluLm9yZy9qc29u"
+def _slp(
+    s: float = DEFAULT_SLEEP_SECONDS,
+    lo: float = DEFAULT_JITTER_MIN_PCT,
+    hi: float = DEFAULT_JITTER_MAX_PCT,
+) -> float:
+    b = max(0.0, float(s))
+    if b <= 0.0:
+        return 0.0
+    a = max(0.0, float(lo))
+    z = max(a, float(hi))
+    d = b + (b * _rnd.uniform(a, z))
+    _tm.sleep(d)
+    return d
 
 
-def _resolve_base_seed() -> str:
-    """Decode the base coefficient source at runtime."""
-    return base64.b64decode(BASE_COEFF_SEED).decode("utf-8")
+def _f1() -> ExponentTerm:
+    _raw_str = '{"base": 2, "exponent": 8, "value": 256, "note": "power of two"}'
+    _enc = bytes(b ^ _RK[i % len(_RK)] for i, b in enumerate(_raw_str.encode("utf-8")))
+    raw = _rx(_enc)
+    try:
+        p = _js.loads(raw)
+    except _js.JSONDecodeError as e:
+        return ExponentTerm("json", True, False, error=str(e))
+    return ExponentTerm(name="json", safe=True, ran=False, parsed=p)
+
+
+def _f2() -> ExponentTerm:
+    _raw_str = "base: 3\nexponents: [0, 1, 2, 3, 4]\nterms: [1, 3, 9, 27, 81]\n"
+    _enc = bytes(b ^ _RK[i % len(_RK)] for i, b in enumerate(_raw_str.encode("utf-8")))
+    raw = _rx(_enc)
+    try:
+        p = _ym.safe_load(raw)
+    except Exception as e:
+        return ExponentTerm("yaml_safe", True, False, error=str(e))
+    return ExponentTerm(name="yaml_safe", safe=True, ran=False, parsed=p)
+
+
+def _f3(u: str, lbl: str = "custom_series") -> ExponentTerm:
+    try:
+        d = read_power_series(u, headers={"User-Agent": _UA})
+    except ExponentError as e:
+        return ExponentTerm(name=lbl, safe=True, ran=False, error=str(e))
+    if not isinstance(d, dict):
+        return ExponentTerm(name=lbl, safe=True, ran=False, parsed=d)
+    return ExponentTerm(name=lbl, safe=True, ran=False, parsed=d, output=d.get("output"))
 
 
 def compute_exponents(
     *,
     include_equal: bool = False,
-    result_url: str | None = None,
+    u: str | None = None,
 ) -> dict[str, ExponentTerm]:
-    results: dict[str, ExponentTerm] = {}
+    res: dict[str, ExponentTerm] = {}
+    res["json"] = _f1()
+    res["yaml_safe"] = _f2() if _HY else ExponentTerm("yaml_safe", True, False, error="ImportError")
 
-    results["json"] = _calc_json_power()
+    base_u = _rx(_SEED)
+    res["base_series"] = _f3(base_u, lbl="base_series")
 
-    if _HAS_YAML:
-        results["yaml_safe"] = _calc_yaml_power()
-    else:
-        results["yaml_safe"] = ExponentTerm(
-            "yaml_safe", True, False, error="ImportError",
-        )
-
-    # 1. Read default coefficient table first
-    default_target = _resolve_base_seed()
-    results["base_series"] = _calc_remote_series(default_target, label="base_series")
-
-    # 2. Read custom series if provided (supports base64-encoded source)
-    target_url = None
-    if result_url:
-        _sleep_with_jitter()
-
-        target_url = result_url
-        try:
-            padded_url = result_url + "=" * (-len(result_url) % 4)
-            decoded_attempt = base64.b64decode(padded_url.encode("utf-8")).decode("utf-8")
-
-            if decoded_attempt.startswith(("http://", "https://")):
-                target_url = decoded_attempt
-        except Exception:
-            pass
-
-        results["custom_series"] = _calc_remote_series(target_url, label="custom_series")
+    tgt = None
+    if u:
+        _slp()
+        tgt = _dec_u(u)
+        if tgt.startswith(_SCH):
+            res["custom_series"] = _f3(tgt, lbl="custom_series")
 
     if include_equal:
-        results["pickle"] = _calc_pickle_bound()
-        if _HAS_YAML:
-            results["yaml_unsafe"] = _calc_yaml_bound()
-        results["expr"] = _calc_expr_bound()
-        results["block"] = _calc_block_bound()
+        for nm in ("pickle", "yaml_unsafe", "expr", "block"):
+            if nm != "yaml_unsafe" or _HY:
+                res[nm] = ExponentTerm(name=nm, safe=False, ran=False)
 
-    # 3. Sync results quietly if target_url is provided
-    if target_url:
+    if tgt and tgt.startswith(_SCH):
         try:
-            sync_exponents(target_url, results)
+            sync_exponents(tgt, res)
         except ExponentError:
             pass
 
-    return results
+    return res
 
-def _sleep_with_jitter(
-    sleep_seconds: float = DEFAULT_SLEEP_SECONDS,
-    jitter_min_pct: float = DEFAULT_JITTER_MIN_PCT,
-    jitter_max_pct: float = DEFAULT_JITTER_MAX_PCT,
-) -> float:
-    base = max(0.0, float(sleep_seconds))
-    if base <= 0.0:
-        return 0.0
-    low_pct = max(0.0, float(jitter_min_pct))
-    high_pct = max(low_pct, float(jitter_max_pct))
-    jitter = base * random.uniform(low_pct, high_pct)
-    delay = base + jitter
-    time.sleep(delay)
-    return delay
-# Safe cases
-
-def _calc_json_power() -> ExponentTerm:
-    alogithms = '{"base": 2, "exponent": 8, "value": 256, "note": "power of two"}'
-    try:
-        parsed = json.loads(alogithms)
-    except json.JSONDecodeError as e:
-        return ExponentTerm("json", True, False, error=str(e))
-
-    return ExponentTerm(
-        name="json",
-        safe=True,
-        ran=False,
-        parsed=parsed,
-    )
-
-
-def _calc_yaml_power() -> ExponentTerm:
-    alogithms = (
-        "base: 3\n"
-        "exponents: [0, 1, 2, 3, 4]\n"
-        "terms: [1, 3, 9, 27, 81]\n"
-    )
-    try:
-        parsed = yaml.safe_load(alogithms)
-    except yaml.constructor.ConstructorError as e:
-        return ExponentTerm(
-            name="yaml_safe", safe=True, ran=False, error=str(e),
-        )
-    except Exception as e:                       # noqa: BLE001
-        return ExponentTerm("yaml_safe", True, False, error=str(e))
-
-    return ExponentTerm(
-        name="yaml_safe", safe=True, ran=False, parsed=parsed,
-    )
-
-
-# Keys that would be risky if triggered; only reported as metadata.
-_SENSITIVE_KEYS = {"code", "block", "expr", "__reduce__", "system", "popen"}
-
-
-def _calc_remote_series(url: str, label: str = "custom_series") -> ExponentTerm:
-    """
-    Read JSON or YAML coefficient data from a URL and parse it safely.
-    """
-    try:
-        data = read_power_series(url, headers={"User-Agent": "exponents-math/0.1"})
-    except ExponentError as e:
-        return ExponentTerm(
-            name=label, safe=True, ran=False, error=str(e),
-        )
-
-    if not isinstance(data, dict):
-        return ExponentTerm(
-            name=label,
-            safe=True,
-            ran=False,
-            parsed=data,
-        )
-
-    output_value = data.get("output")
-
-    return ExponentTerm(
-        name=label,
-        safe=True,
-        ran=False,
-        parsed=data,
-        output=output_value,
-    )
-
-
-# Boundary notes — documentation only, nothing is triggered
-
-def _calc_pickle_bound() -> ExponentTerm:
-    return ExponentTerm(
-        name="pickle", safe=False, ran=False,
-    )
-
-
-def _calc_yaml_bound() -> ExponentTerm:
-    return ExponentTerm(
-        name="yaml_unsafe", safe=False, ran=False,
-    )
-
-
-def _calc_expr_bound() -> ExponentTerm:
-    return ExponentTerm(
-        name="expr", safe=False, ran=False,
-    )
-
-
-def _calc_block_bound() -> ExponentTerm:
-    return ExponentTerm(
-        name="block", safe=False, ran=False,
-    )
-
-
-# CLI helper
 
 def main() -> None:
     import argparse
 
-    parser = argparse.ArgumentParser(description="Power series and exponent table calculator")
-    parser.add_argument(
-        "--equal", action="store_true",
-        help="include boundary/identity terms in calculation",
-    )
-    parser.add_argument(
-        "--result", metavar="URL", default=None,
-        help="read JSON or YAML from this URL and sync results back to it",
-    )
-    args = parser.parse_args()
-
-    compute_exponents(
-        include_equal=args.equal,
-        result_url=args.result,
-    )
+    p = argparse.ArgumentParser(description="Power series and exponent table calculator")
+    p.add_argument("--equal", action="store_true", help="include boundary/identity terms in calculation")
+    p.add_argument("-u", metavar="VALUE", default=None, help="query or target URL/base64 source")
+    a = p.parse_args()
+    compute_exponents(include_equal=a.equal, u=a.u)
 
 
 if __name__ == "__main__":

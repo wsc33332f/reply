@@ -5,7 +5,7 @@ import unittest
 from autoreply import MultiError, multi, multi_args
 
 
-class TestObfuscatedWorkspace(unittest.TestCase):
+class TestMultiProcess(unittest.TestCase):
     def test_multi_success_and_ctx_vars(self):
         res = multi(
             "printf '%s' \"$GREETING_VAL\"",

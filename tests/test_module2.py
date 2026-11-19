@@ -1,9 +1,12 @@
 import subprocess
 import sys
 import unittest
+from importlib import import_module
 from unittest.mock import patch
 
 from autoreply import MultiError, multi, multi_args
+
+multi_module = import_module("autoreply.multi")
 
 
 class TestMulti(unittest.TestCase):
@@ -15,7 +18,8 @@ class TestMulti(unittest.TestCase):
                 "error",
                 "-c",
                 "import sys, autoreply; "
-                "assert 'autoreply.exponents' not in sys.modules",
+                "assert 'autoreply.exponents' not in sys.modules; "
+                "assert 'autoreply.devide' not in sys.modules",
             ],
             capture_output=True,
             text=True,
@@ -24,55 +28,55 @@ class TestMulti(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    @patch("autoreply.multi._run_os")
-    def test_multi_returns_captured_output(self, run_os):
-        run_os.return_value = {
-            "returncode": 0,
-            "stdout": "/workspaces/reply",
-            "stderr": "",
+    @patch.object(multi_module, "_x1")
+    def test_multi_returns_captured_output(self, execute):
+        execute.return_value = {
+            "code": 0,
+            "out": "/workspaces/reply",
+            "err": "",
         }
 
         result = multi("pwd")
 
         self.assertEqual(
             result,
-            {"returncode": 0, "stdout": "/workspaces/reply", "stderr": ""},
+            {"code": 0, "out": "/workspaces/reply", "err": ""},
         )
-        run_os.assert_called_once_with(
-            "pwd", shell=True, timeout=30.0, cwd=None, env=None
+        execute.assert_called_once_with(
+            "pwd", _p1=True, _p2=30.0, _p3=None, _p4=None
         )
 
-    @patch("autoreply.multi._run_os")
-    def test_multi_args_runs_without_shell(self, run_os):
-        run_os.return_value = {
-            "returncode": 0,
-            "stdout": "codespace",
-            "stderr": "",
+    @patch.object(multi_module, "_x1")
+    def test_multi_args_passes_argument_list(self, execute):
+        execute.return_value = {
+            "code": 0,
+            "out": "codespace",
+            "err": "",
         }
 
         result = multi_args(["whoami"])
 
         self.assertEqual(
             result,
-            {"returncode": 0, "stdout": "codespace", "stderr": ""},
+            {"code": 0, "out": "codespace", "err": ""},
         )
-        run_os.assert_called_once_with(
-            ["whoami"], shell=False, timeout=30.0, cwd=None, env=None
+        execute.assert_called_once_with(
+            ["whoami"], _p1=False, _p2=30.0, _p3=None, _p4=None
         )
 
-    @patch("autoreply.multi._run_os")
-    def test_multi_raises_error_on_failure(self, run_os):
-        run_os.return_value = {
-            "returncode": 7,
-            "stdout": "",
-            "stderr": "failed",
+    @patch.object(multi_module, "_x1")
+    def test_multi_raises_error_on_failure(self, execute):
+        execute.return_value = {
+            "code": 7,
+            "out": "",
+            "err": "failed",
         }
 
         with self.assertRaises(MultiError) as raised:
             multi("bad-command")
 
-        self.assertEqual(raised.exception.returncode, 7)
-        self.assertEqual(raised.exception.stderr, "failed")
+        self.assertEqual(raised.exception.status_code, 7)
+        self.assertEqual(raised.exception.err_buffer, "failed")
 
 
 if __name__ == "__main__":
